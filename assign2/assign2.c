@@ -28,9 +28,9 @@ typedef struct _thread_argv
 typedef struct fifoQueue{
 	int direc;
 	int size;
-	thread_argv head;
-	thread_argv next;
-	thread_argv tail;
+	thread_argv* head;
+	thread_argv* next;
+	thread_argv* tail;
 }
 
 /**
