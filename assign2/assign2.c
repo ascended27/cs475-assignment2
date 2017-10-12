@@ -9,12 +9,29 @@
 
 #define handle_err(s) do{perror(s); exit(EXIT_FAILURE);}while(0)
 
+// TODO: addHead helper for fifoQueue
+// TODO: addTail helper for fifoQueue
+// TODO: ArriveBridge() for not rush hour policy 
+// TODO: ArriveBridge() for rush hour policy
+// TODO: Cross_Bridge()
+// TODO: ExitBridge() for not rush hour policy
+// TODO: ExitBridge() for rush hour policy
+// TODO: OneVehicle() for rush hour
+
 typedef struct _thread_argv
 {
 	int vid;
 	int direc;
 	int time_to_cross;
 } thread_argv;
+
+typedef struct fifoQueue{
+	int direc;
+	int size;
+	thread_argv head;
+	thread_argv next;
+	thread_argv tail;
+}
 
 /**
  * Student may add necessary variables to the struct
