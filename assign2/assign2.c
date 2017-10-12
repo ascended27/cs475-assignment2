@@ -18,6 +18,15 @@
 // TODO: ExitBridge() for rush hour policy
 // TODO: OneVehicle() for rush hour
 
+// IN PROGRESS: queue()
+
+//This is a node for the queue
+typedef struct node
+{
+    thread_argv* thread;
+    node* next;
+} node;
+
 typedef struct _thread_argv
 {
 	int vid;
@@ -25,12 +34,12 @@ typedef struct _thread_argv
 	int time_to_cross;
 } thread_argv;
 
-typedef struct fifoQueue{
+typedef struct fifoQueue
+{
 	int direc;
 	int size;
-	thread_argv head;
-	thread_argv next;
-	thread_argv tail;
+	node* head;
+	node* tail;
 }
 
 /**
@@ -42,6 +51,11 @@ typedef struct _bridge {
 	int curr_dir;
 } bridge_t;
 
+
+//Global Queues
+fifoQueue eastQueue
+fifoQueue westQueue
+
 void bridge_init();
 void bridge_destroy();
 void dispatch(int n);
@@ -49,6 +63,23 @@ void *OneVehicle(void *argv);
 void ArriveBridge(int vid, int direc);
 void CrossBridge(int vid, int direc, int time_to_cross);
 void ExitBridge(int vid, int direc);
+
+//This function will insert a new thread to the fifoQueue
+// 1 is true, 0 is false.
+int isFull();
+
+//This function will tell us if the queue is empty.
+//1 is empty, 0 is not empty.
+int isEmpty();
+
+//Inserts node at tail queue. 1 successful, 0 not successful
+int queue(node* newNode);
+
+//Remove a node from the queue. It will return a node from the front of th queue
+thread_argv* dequeue();
+
+//Will initialize the queue
+initQueue();
 
 pthread_t *threads = NULL;	/* Array to hold thread structs */
 thread_argv *args = NULL;	/* Array to hold thread arguments */
@@ -178,4 +209,10 @@ void ExitBridge(int vid, int direc)
 	fprintf(stderr, "vid=%d dir=%d exit with departure idx=%d\n", 
 		vid, direc, br.dept_idx);
 	return;
+}
+
+//==================== Queue Functions ================================
+int isFull()
+{
+
 }
