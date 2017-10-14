@@ -11,8 +11,6 @@
 
 #define handle_err(s) do{perror(s); exit(EXIT_FAILURE);}while(0)
 
-// TODO: addHead helper for fifoQueue
-// TODO: addTail helper for fifoQueue
 // TODO: ArriveBridge() for not rush hour policy 
 // TODO: ArriveBridge() for rush hour policy
 // TODO: Cross_Bridge()
@@ -20,12 +18,11 @@
 // TODO: ExitBridge() for rush hour policy
 // TODO: OneVehicle() for rush hour
 
-// IN PROGRESS: queue()
-
 //This is a node for the queue
 typedef struct _node
 {
     pthread_cond_t* cond;
+    int vid;
     struct _node* next;
     struct _node* prev;
 } node;
@@ -61,6 +58,8 @@ fifoQueue* eastQueue;
 fifoQueue* westQueue;
 pthread_mutex_t eastQLock = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t westQLock = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t exitMutex = PTHREAD_MUTEX_INITIALIZER;
 
 void bridge_init();
 void bridge_destroy();
@@ -75,28 +74,31 @@ void ExitBridge(int vid, int direc);
 // 1 is true, 0 is false.
 int isFull();
 
-// I don't think we will need these since we are using a linked list.
 //This function will tell us if the queue is empty.
 //1 is empty, 0 is not empty.
-int isEmpty();
+int isEmpty(int);
 
 //Inserts node at tail queue. 1 successful, 0 not successful
-int queue(node* newNode);
+int enqueue(pthread_cond_t*,int,int);
 
 //Remove a node from the queue. It will return a node from the front of th queue
-pthread_cond_t* dequeue();
+pthread_cond_t* dequeue(int);
 
 //Will initialize the queue
 void initQueues();
+
+// Will clean up the queues
+void destroyQueues();
 
 // Return the size of the queue specified by the passed int. The passed int should be 
 // Either WEST_DIR or EAST_DIR. Returns the size of the queue or -1 if the passed int
 // is not WEST_DIR or EAST_DIR.
 int getSize(int);
 
+pthread_cond_t** condVars = NULL;/* Array to hold cond variables */
 pthread_t *threads = NULL;	/* Array to hold thread structs */
 thread_argv *args = NULL;	/* Array to hold thread arguments */
-int num_v = 30;			/* Total number of vehicles to be created */
+int num_v = 10;			/* Total number of vehicles to be created */
 
 bridge_t br;			/* Bridge struct shared by the vehicle threads*/
 
@@ -127,12 +129,16 @@ int main(int argc, char *argv[])
 	/* Init bridge struct */
 	bridge_init();
 
+	initQueues();
+	condVars = malloc(sizeof(pthread_cond_t)*num_v);
+
 	/* Create vehicle threads */
 	switch(sched_opt)
 	{
 		case 1 : dispatch(5); break;
 		case 2 : dispatch(10); break;
 		case 3 : dispatch(30); break;
+		case 4 : dispatch(1); break; //This is a test
 		default:
 			fprintf(stderr, "Bad Schedule Option %d\n", sched_opt);
 			exit(EXIT_FAILURE);
@@ -144,6 +150,8 @@ int main(int argc, char *argv[])
 
 	/* Clean up and exit */
 	bridge_destroy();
+
+	destroyQueues();
 
 	exit(EXIT_SUCCESS);
 }
@@ -177,12 +185,11 @@ void dispatch(int n)
 
 void *OneVehicle(void *argv)
 {
-	thread_argv *args = (thread_argv *)argv;
-	
+	thread_argv *args = (thread_argv *)argv;	
 	ArriveBridge(args->vid, args->direc);
 	CrossBridge(args->vid, args->direc, args->time_to_cross);
 	ExitBridge(args->vid, args->direc);
-
+	
 	pthread_exit(0);
 }
 
@@ -206,11 +213,33 @@ void bridge_destroy()
 
 void ArriveBridge(int vid, int direc)
 {
+	// When a vehicle arrives we create a new
+	// condition var and add it to the proper
+	// queue. We also add its condition var
+	// to the condVars array to keep up with those.
+	pthread_mutex_lock(&mutex);
+	pthread_cond_t newCond;
+	pthread_cond_init(&newCond,NULL);
+	condVars[vid] = &newCond;
+	pthread_mutex_unlock(&mutex);
+	enqueue(&newCond,direc,vid);
+
 	return;
 }
 
 void CrossBridge(int vid, int direc, int time_to_cross)
 {
+	pthread_mutex_lock(&mutex);
+	if(direc == EAST_DIR){
+		while(eastQueue->head->vid != vid && br.num_car >= 4 && br.curr_dir == EAST_DIR)
+			pthread_cond_wait(condVars[vid],&mutex);
+	} else if(direc == WEST_DIR){
+		while(westQueue->head->vid != vid && br.num_car >= 4 && br.curr_dir == WEST_DIR)
+			pthread_cond_wait(condVars[vid],&mutex);
+	}
+	dequeue(direc);
+	br.num_car++;
+	pthread_mutex_unlock(&mutex);
 	fprintf(stderr, "vid=%d dir=%d starts crossing. Bridge num_car=%d curr_dir=%d\n", 
 		vid, direc, br.num_car, br.curr_dir);
 	sleep(time_to_cross);
@@ -219,6 +248,24 @@ void CrossBridge(int vid, int direc, int time_to_cross)
 
 void ExitBridge(int vid, int direc)
 {
+	pthread_mutex_lock(&exitMutex);
+	br.num_car--;
+	if(br.curr_dir == EAST_DIR){
+		if(eastQueue->size>0)
+			pthread_cond_broadcast(eastQueue->head->cond);
+		else if(westQueue->size>0){
+			br.curr_dir = WEST_DIR;
+			pthread_cond_broadcast(westQueue->head->cond);
+		}	
+	} else if(br.curr_dir == WEST_DIR){
+		if(westQueue->size>0)
+			pthread_cond_broadcast(westQueue->head->cond);
+		else if(eastQueue->size>0){
+			br.curr_dir = EAST_DIR;
+			pthread_cond_broadcast(eastQueue->head->cond);
+		}	
+	}
+	pthread_mutex_unlock(&exitMutex);
 	fprintf(stderr, "vid=%d dir=%d exit with departure idx=%d\n", 
 		vid, direc, br.dept_idx);
 	return;
@@ -230,9 +277,28 @@ void initQueues(){
 	westQueue = malloc(sizeof(fifoQueue));
 }
 
-int enqueue(pthread_cond_t* condition,int direc){
+void destroyQueues(){
+	node* current;
+	node* toDelete;
+	current = eastQueue -> head;
+	while(current!=NULL){
+		toDelete = current;
+		current = current -> next;
+		free(toDelete);
+	}
+
+	current = westQueue -> head;
+	while(current!=NULL){
+		toDelete = current;
+		current = current -> next;
+		free(toDelete);
+	}
+}
+
+int enqueue(pthread_cond_t* condition,int direc,int vid){
 	node* newNode = malloc(sizeof(node));
 	newNode -> cond = condition;
+	newNode -> vid = vid;
 	newNode -> next = NULL;
 	newNode -> prev = NULL;
 
@@ -278,17 +344,25 @@ pthread_cond_t* dequeue(int direc){
 			toReturn = node -> cond;
 			free(node);
 			eastQueue -> size--;
+			if(eastQueue->size == 0){
+				eastQueue->head = NULL;
+				eastQueue->tail = NULL;
+			}
 			pthread_mutex_unlock(&eastQLock);
 		}
 		return toReturn;		
 	} else if(direc == WEST_DIR){
 		if(isEmpty(WEST_DIR) == 1){
 			pthread_mutex_lock(&westQLock);
-			node* node = eastQueue -> head;
+			node* node = westQueue -> head;
 			westQueue -> head = westQueue -> head->next;
 			toReturn = node -> cond;
 			free(node);
 			westQueue -> size--;
+			if(westQueue->size == 0){
+				westQueue->head = NULL;
+				westQueue->tail = NULL;
+			}
 			pthread_mutex_unlock(&westQLock);
 		}
 		return toReturn;
