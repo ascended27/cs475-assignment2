@@ -38,6 +38,7 @@ typedef struct fifoQueue
 {
 	int direc;
 	int size;
+
 	node* head;
 	node* tail;
 }
