@@ -95,6 +95,14 @@ void destroyQueues();
 // is not WEST_DIR or EAST_DIR.
 int getSize(int);
 
+//Encapsulates logic for checking whether car should wait to cross
+int testEastStateWait(int vid);
+int testWestStateWait(int vid);
+
+//Encapsulates test of state to see if a car can be unlocked on its cond var.
+int testEastStateGo(int vid, int direc);
+int testWestStateGo(int vid, int direc);
+
 pthread_cond_t** condVars = NULL;/* Array to hold cond variables */
 pthread_t *threads = NULL;	/* Array to hold thread structs */
 thread_argv *args = NULL;	/* Array to hold thread arguments */
@@ -232,26 +240,59 @@ void ArriveBridge(int vid, int direc)
     pthread_cond_t* newCond = malloc(sizeof(pthread_cond_t));
     pthread_cond_init(newCond,NULL);
     condVars[vid] = newCond;
-    pthread_mutex_unlock(&mutex);
     enqueue(newCond,direc,vid);
+    pthread_mutex_unlock(&mutex);
+}
+
+int testEastStateWait(int vid)
+{
+    return eastQueue->head->vid != vid && br.num_car >= 4 && br.curr_dir == EAST_DIR;
+}
+
+int testWestStateWait(int vid)
+{
+    return westQueue->head->vid != vid && br.num_car >= 4 && br.curr_dir == WEST_DIR;
+}
+
+int testEastStateGo(int vid, int direc)
+{
+    if(direc == WEST_DIR && br.num_car == 0)
+        return 1;
+
+    if(direc == EAST_DIR && br.num_car < 5)
+        return 1;
+
+    return 0;
+}
+
+int testWestStateGo(int vid, int direc)
+{
+    if(direc == EAST_DIR && br.num_car == 0)
+        return 1;
+
+    if(direc == WEST_DIR && br.num_car < 5)
+        return 1;
+
+    return 0;
 }
 
 void CrossBridge(int vid, int direc, int time_to_cross)
 {
 	pthread_mutex_lock(&mutex);
 	if(direc == EAST_DIR){
-		while(eastQueue->head->vid != vid && br.num_car >= 4 && br.curr_dir == EAST_DIR)
+		while(testEastStateWait(vid))
 			pthread_cond_wait(condVars[vid],&mutex);
 	} else if(direc == WEST_DIR){
-		while(westQueue->head->vid != vid && br.num_car >= 4 && br.curr_dir == WEST_DIR)
+		while(testWestStateWait(vid))
 			pthread_cond_wait(condVars[vid],&mutex);
 	}
-	dequeue(direc);
-	br.num_car++;
-	pthread_mutex_unlock(&mutex);
-	fprintf(stderr, "vid=%d dir=%d starts crossing. Bridge num_car=%d curr_dir=%d\n", 
-		vid, direc, br.num_car, br.curr_dir);
-	sleep(time_to_cross);
+
+    br.num_car++;
+    pthread_mutex_unlock(&mutex);
+    fprintf(stderr, "vid=%d dir=%d starts crossing. Bridge num_car=%d curr_dir=%d\n",
+        vid, direc, br.num_car, br.curr_dir);
+    sleep(time_to_cross);
+
 	return;
 }
 
@@ -259,6 +300,18 @@ void ExitBridge(int vid, int direc)
 {
 	pthread_mutex_lock(&exitMutex);
 	br.num_car--;
+
+    if(testEastStateGo(vid, direc) && !testWestStateGo(vid, direc))
+    {
+        pthread_cond_t* condVar = dequeue(direc);
+        pthread_cond_signal(condVar);
+    }
+    else if(!testEastStateGo(vid, direc) && testWestStateGo(vid, direc))
+    {
+        pthread_cond_t* condVar = dequeue(direc);
+        pthread_cond_signal(condVar);
+    }
+
 	if(br.curr_dir == EAST_DIR){
 		if(eastQueue->size>0)
 			pthread_cond_broadcast(eastQueue->head->cond);
@@ -319,10 +372,11 @@ int enqueue(pthread_cond_t* condition,int direc,int vid){
 		if(eastQueue -> size == 0)
 			eastQueue -> head = newNode;
 		else if(eastQueue -> size > 0)
-			eastQueue -> tail -> next = newNode;	
+			eastQueue -> tail -> next = newNode;
 		eastQueue -> tail = newNode;
 		eastQueue -> size++;
 		pthread_mutex_unlock(&eastQLock);
+
 		return 1;
 	} else if(direc == WEST_DIR){
 		pthread_mutex_lock(&westQLock);
@@ -338,6 +392,7 @@ int enqueue(pthread_cond_t* condition,int direc,int vid){
 	} else{
 		return 0;
 	}
+
 }
 
 pthread_cond_t* dequeue(int direc){
