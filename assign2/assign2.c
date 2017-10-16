@@ -50,6 +50,7 @@ typedef struct _bridge {
 	int dept_idx;
 	int num_car;
 	int curr_dir;
+	int max_car;
 } bridge_t;
 
 
@@ -59,7 +60,11 @@ fifoQueue* westQueue;
 pthread_mutex_t eastQLock = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t westQLock = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t carMutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t arriveMutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t crossMutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t exitMutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t bridgeFull = PTHREAD_COND_INITIALIZER;
 
 void bridge_init();
 void bridge_destroy();
@@ -106,7 +111,7 @@ int testWestStateGo(int vid, int direc);
 pthread_cond_t** condVars = NULL;/* Array to hold cond variables */
 pthread_t *threads = NULL;	/* Array to hold thread structs */
 thread_argv *args = NULL;	/* Array to hold thread arguments */
-int num_v = 10;			/* Total number of vehicles to be created */
+int num_v = 30;			/* Total number of vehicles to be created */
 
 bridge_t br;			/* Bridge struct shared by the vehicle threads*/
 
@@ -138,7 +143,6 @@ int main(int argc, char *argv[])
 	bridge_init();
 
 	initQueues();
-	condVars = malloc(sizeof(pthread_cond_t)*num_v);
 
 	/* Create vehicle threads */
 	switch(sched_opt)
@@ -146,7 +150,6 @@ int main(int argc, char *argv[])
 		case 1 : dispatch(5); break;
 		case 2 : dispatch(10); break;
 		case 3 : dispatch(30); break;
-		case 4 : dispatch(1); break; //This is a test
 		default:
 			fprintf(stderr, "Bad Schedule Option %d\n", sched_opt);
 			exit(EXIT_FAILURE);
@@ -210,7 +213,7 @@ void bridge_init()
 	br.dept_idx = 0;
 	br.curr_dir = 0;
 	br.num_car = 0;
-
+	br.max_car = 5;
 	return;
 }
 
@@ -221,19 +224,154 @@ void bridge_destroy()
 
 void ArriveBridge(int vid, int direc)
 {
-    //Acquire lock to malloc things and enqueue stuff
-    pthread_mutex_lock(&mutex);
+    /*
+    Used malloc to place new condition variables on the heap so
+    that they aren't lost once this function's stack frame is gone.
+    */
+	//pthread_mutex_lock(&arriveMutex);
+    pthread_cond_t newCond;
+    pthread_cond_init(&newCond,NULL);
+    enqueue(&newCond,direc,vid);
+	//pthread_mutex_lock(&mutex);
+	if(direc == EAST_DIR || (direc == WEST_DIR && westQueue->size == 0)){
+		if(eastQueue->head->vid == vid && br.curr_dir == EAST_DIR){
+			// We are first in line so dequeue ourself and don't wait
+			dequeue(direc);
+		}else{
+			pthread_mutex_lock(&carMutex);
+			while(br.curr_dir != EAST_DIR || br.num_car >= br.max_car)
+				pthread_cond_wait(&newCond,&carMutex);
+			pthread_mutex_unlock(&carMutex);
 
-    //Create new cond variable
-    pthread_cond_t* cond = malloc(sizeof(pthread_cond_t));
-    //Initialize condition variable
-    pthread_cond_init(cond, NULL);
-    //Add variable to the queue with vehicle id
-    enqueue(cond, direc, vid);
-    //Add to cond variable array
-    condVars[vid] = cond;
+		}
+	} else if(direc == WEST_DIR || (direc == EAST_DIR && eastQueue->size == 0)){
+		if(westQueue->head->vid == vid && br.curr_dir == WEST_DIR){
+			// We are first in line so dequeue ourself and don't wait
+			dequeue(direc);
+		}else{
+			pthread_mutex_lock(&carMutex);
+			while(br.curr_dir != WEST_DIR || br.num_car >= br.max_car)
+				pthread_cond_wait(&newCond,&carMutex);
+			pthread_mutex_unlock(&carMutex);
 
-    pthread_mutex_unlock(&mutex);
+		}
+	}
+	//pthread_mutex_unlock(&mutex);
+    //pthread_mutex_unlock(&arriveMutex);
+}
+
+void CrossBridge(int vid, int direc, int time_to_cross)
+{
+	// Acquire a lock b/c we are interacting with
+	// shared bridge data.
+	pthread_mutex_lock(&mutex);
+
+	while(br.num_car >= br.max_car)
+		pthread_cond_wait(&bridgeFull,&mutex);
+	
+	// A new car just got on the bridge so increment
+	// the car number
+	br.num_car++;
+	
+	// If there is room for more cars on the bridge then
+	// signal another car to go
+	if(br.num_car < br.max_car){
+		// If the direction is east check the east side first
+		if(direc == EAST_DIR){
+			// If the east queue isn't empty then signal a car from there
+			if(eastQueue->size != 0){
+				//pthread_mutex_lock(&carMutex);
+				pthread_cond_t * cond = dequeue(direc);
+				pthread_cond_signal(cond);
+				//pthread_mutex_unlock(&carMutex);		
+			}
+		} else if(direc == WEST_DIR){
+		// Otherwise the direction is west check the west side first
+			// If the west queue isn't empty then signal a car from there
+			if(westQueue->size != 0){
+				//pthread_mutex_lock(&carMutex);
+				pthread_cond_t * cond = dequeue(direc);
+				pthread_cond_signal(cond);
+				//pthread_mutex_unlock(&carMutex);
+			}
+		}
+		
+	}
+	
+	// Output the crossing message
+    fprintf(stderr, "vid=%d dir=%d starts crossing. Bridge num_car=%d curr_dir=%d\n",
+        vid, direc, br.num_car, br.curr_dir);
+    
+	// Release the lock
+	pthread_mutex_unlock(&mutex);
+	
+	// Sleep till the car has crossed the bridge
+	sleep(time_to_cross);
+	
+	
+	return;
+}
+
+void ExitBridge(int vid, int direc)
+{
+	// Acquire a lock b/c we are interacting with
+	// shared bridge data.
+	pthread_mutex_lock(&mutex);
+	// This car just left the bridge so decrement the car count
+	br.num_car--;
+
+	if(br.num_car < br.max_car)
+		pthread_cond_signal(&bridgeFull);	
+
+	// If that count is 0 then see if there are any new cars waiting
+	//pthread_mutex_lock(&carMutex);
+	// If direc is east then check there first
+	if(direc == EAST_DIR){
+		// If the east queue isn't empty then signal a car there
+		if(eastQueue -> size != 0 && br.num_car < br.max_car){
+			pthread_cond_t * cond = dequeue(direc);
+			pthread_cond_signal(cond);
+		} else if(westQueue -> size != 0 && br.num_car == 0){ 
+		// Otherwise check the west queue and signal a car if that isn't empty
+		// and flip the bridge direction
+			br.curr_dir = WEST_DIR;
+			pthread_cond_t * cond = dequeue(WEST_DIR);
+			pthread_cond_signal(cond);
+		}
+	} else if(direc == WEST_DIR){ // Otherwise check the west side for cars
+		// If the west queue isn't empty then signal a car there
+		if(westQueue -> size != 0 && br.num_car < br.max_car){
+			pthread_cond_t * cond = dequeue(direc);
+			pthread_cond_signal(cond);
+		} else if(eastQueue -> size != 0 && br.num_car == 0){
+			// Otherwise check the east queue and signal a car if that isn't empty
+			// and flip the bridge direction
+			br.curr_dir = EAST_DIR;
+			pthread_cond_t * cond = dequeue(EAST_DIR);
+			pthread_cond_signal(cond);
+		}
+	}
+	//pthread_mutex_unlock(&carMutex);
+	
+	// Output the exit message
+	fprintf(stderr, "vid=%d dir=%d exit with departure idx=%d\n", 
+		vid, direc, br.dept_idx);
+	// Increment the dept_idx of the bridge
+	br.dept_idx++;
+	
+	// Release the lock
+	pthread_mutex_unlock(&mutex);
+	return;
+}
+
+int testEastStateWait(int vid)
+{
+    return eastQueue->head->vid != vid && br.num_car >= br.max_car && br.curr_dir == EAST_DIR;
+}
+
+int testWestStateWait(int vid)
+{
+    return westQueue->head->vid != vid && br.num_car >= br.max_car && br.curr_dir == WEST_DIR;
 }
 
 void CrossBridge(int vid, int direc, int time_to_cross)
@@ -249,25 +387,29 @@ void CrossBridge(int vid, int direc, int time_to_cross)
     }
 
 
-    fprintf(stderr, "vid=%d dir=%d starts crossing. Bridge num_car=%d curr_dir=%d\n",vid, direc, br.num_car, br.curr_dir);
-    sleep(time_to_cross);
-    pthread_mutex_unlock(&mutex);
-
-
-	return;
-}
-
-void ExitBridge(int vid, int direc)
+int testWestStateGo(int vid, int direc)
 {
-	fprintf(stderr, "vid=%d dir=%d exit with departure idx=%d\n",
-		vid, direc, br.dept_idx);
-	return;
+    if(direc == EAST_DIR && br.num_car == 0)
+        return 1;
+
+    if(direc == WEST_DIR && br.num_car < 5)
+        return 1;
+
+    return 0;
 }
 
 //==================== Queue Functions ================================
 void initQueues(){
 	eastQueue = malloc(sizeof(fifoQueue));
+	eastQueue->size = 0;
+	eastQueue->head = NULL;
+	eastQueue->tail = NULL;
+	eastQueue->direc = EAST_DIR;
 	westQueue = malloc(sizeof(fifoQueue));
+	westQueue->size = 0;
+	westQueue->head = NULL;
+	westQueue->tail = NULL;
+	westQueue->direc = WEST_DIR;
 }
 
 void destroyQueues(){
@@ -330,7 +472,7 @@ pthread_cond_t* dequeue(int direc){
 	pthread_cond_t* toReturn;
 
 	if(direc == EAST_DIR){
-		if(isEmpty(EAST_DIR) == 1){
+		if(isEmpty(EAST_DIR) == 0){
 			// Not 100% sure if this will end up getting called by the threads. 
 			//I don't think it will but here are some locks just in case.
 			pthread_mutex_lock(&eastQLock);
@@ -347,7 +489,7 @@ pthread_cond_t* dequeue(int direc){
 		}
 		return toReturn;		
 	} else if(direc == WEST_DIR){
-		if(isEmpty(WEST_DIR) == 1){
+		if(isEmpty(WEST_DIR) == 0){
 			pthread_mutex_lock(&westQLock);
 			node* node = westQueue -> head;
 			westQueue -> head = westQueue -> head->next;
@@ -384,7 +526,7 @@ int isEmpty(int direc){
 	} else if(direc == WEST_DIR){
 		pthread_mutex_lock(&westQLock);
 		if(westQueue != NULL){
-			if(eastQueue -> head != NULL){
+			if(westQueue -> head != NULL){
 				toReturn = 0;
 			} else{
 				toReturn = 1;
