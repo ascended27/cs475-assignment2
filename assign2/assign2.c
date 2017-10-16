@@ -230,7 +230,7 @@ void ArriveBridge(int vid, int direc)
     that they aren't lost once this function's stack frame is gone.
     */
 	//pthread_mutex_lock(&arriveMutex);
-    pthread_cond_t newCond = NULL;
+    pthread_cond_t newCond;
     pthread_cond_init(&newCond,NULL);
     enqueue(&newCond,direc,vid);
 	//pthread_mutex_lock(&mutex);
