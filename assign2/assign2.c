@@ -1,3 +1,9 @@
+/***********************
+*
+* Authors: Matthew Rodgers G00847854
+*          Jimmy D. Bodden Pineda G00931220
+*
+************************/
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
