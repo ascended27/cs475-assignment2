@@ -1,3 +1,9 @@
+/***********************
+*
+* Authors: Matthew Rodgers G00847854
+*          Jimmy D. Bodden Pineda G00931220
+*
+************************/
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
@@ -8,6 +14,7 @@
 #define DIREC_PROB 0.7
 #define EAST_DIR 0
 #define WEST_DIR 1
+#define carsPerTurn 6
 
 #define handle_err(s) do{perror(s); exit(EXIT_FAILURE);}while(0)
 
@@ -56,8 +63,11 @@ pthread_mutex_t westQLock = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t carMutex = PTHREAD_MUTEX_INITIALIZER;
 
-// Global Condition varialbes
+// Global Condition Variables
 pthread_cond_t bridgeFull = PTHREAD_COND_INITIALIZER;
+
+// Global Variables
+int carCount = 0;
 
 void bridge_init();
 void bridge_destroy();
@@ -188,7 +198,7 @@ void bridge_init()
 	br.dept_idx = 0;
 	br.curr_dir = 0;
 	br.num_car = 0;
-	br.max_car = 5;
+	br.max_car = 6;
 	return;
 }
 
