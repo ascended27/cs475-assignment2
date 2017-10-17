@@ -87,7 +87,7 @@ pthread_t *threads = NULL;	/* Array to hold thread structs */
 thread_argv *args = NULL;	/* Array to hold thread arguments */
 int num_v = 30;			/* Total number of vehicles to be created */
 int firstCar = 0;		/* Flag for first car */
-
+int carTurn = 0;                /* Count of cars that have gone one way */
 bridge_t br;			/* Bridge struct shared by the vehicle threads*/
 
 int main(int argc, char *argv[])
@@ -248,7 +248,9 @@ void CrossBridge(int vid, int direc, int time_to_cross)
 	// A new car just got on the bridge so increment
 	// the car number
 	br.num_car++;
-	
+
+	carTurn++;
+
 	// If there is room for more cars on the bridge then
 	// signal another car to go
 	if(br.num_car < br.max_car){
@@ -294,6 +296,15 @@ void ExitBridge(int vid, int direc)
 
 	if(br.num_car < br.max_car)
 		pthread_cond_signal(&bridgeFull);	
+
+	if(carTrun > br.max_car){
+	
+		if(br.curr_dir == EAST_DIR){
+			br.curr_dir == WEST_DIR;
+		} else if(br.curr_dir == WEST_DIR){
+			br.curr_dir == EAST_DIR;
+		}
+	}
 
 	// If that count is 0 then see if there are any new cars waiting
 	//pthread_mutex_lock(&carMutex);
