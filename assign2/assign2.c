@@ -208,6 +208,7 @@ void ArriveBridge(int vid, int direc)
     pthread_cond_t newCond;
     pthread_cond_init(&newCond,NULL);
     enqueue(&newCond,direc,vid);
+    pthread_mutex_unlock(&mutex);
     if(br.curr_dir == WEST_DIR && westQueue -> size == 0 && firstCar == 0){
 	br.curr_dir = EAST_DIR;
 	firstCar++;
@@ -240,6 +241,7 @@ void ArriveBridge(int vid, int direc)
 
 	}
     }
+    pthread_mutex_unlock(&mutex);
 }
 
 void CrossBridge(int vid, int direc, int time_to_cross)
